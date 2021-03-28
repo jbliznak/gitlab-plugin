@@ -2,13 +2,21 @@ package com.dabsquared.gitlabjenkins.trigger.handler.merge;
 
 import com.dabsquared.gitlabjenkins.cause.CauseData;
 import com.dabsquared.gitlabjenkins.cause.GitLabWebHookCause;
-import com.dabsquared.gitlabjenkins.gitlab.hook.model.*;
+
+import com.dabsquared.gitlabjenkins.gitlab.hook.model.Action;
+import com.dabsquared.gitlabjenkins.gitlab.hook.model.Commit;
+import com.dabsquared.gitlabjenkins.gitlab.hook.model.MergeRequestChangedLabels;
+import com.dabsquared.gitlabjenkins.gitlab.hook.model.MergeRequestChangedTitle;
+import com.dabsquared.gitlabjenkins.gitlab.hook.model.MergeRequestChanges;
+import com.dabsquared.gitlabjenkins.gitlab.hook.model.MergeRequestHook;
+import com.dabsquared.gitlabjenkins.gitlab.hook.model.MergeRequestLabel;
+import com.dabsquared.gitlabjenkins.gitlab.hook.model.MergeRequestObjectAttributes;
+import com.dabsquared.gitlabjenkins.gitlab.hook.model.State;
 import com.dabsquared.gitlabjenkins.trigger.exception.NoRevisionToBuildException;
 import com.dabsquared.gitlabjenkins.trigger.filter.BranchFilter;
 import com.dabsquared.gitlabjenkins.trigger.filter.MergeRequestLabelFilter;
 import com.dabsquared.gitlabjenkins.trigger.handler.AbstractWebHookTriggerHandler;
 import com.dabsquared.gitlabjenkins.util.BuildUtil;
-import com.dabsquared.gitlabjenkins.trigger.handler.PendingBuildsHandler;
 import com.google.common.base.Predicate;
 import hudson.model.Job;
 import hudson.model.Run;
@@ -16,11 +24,11 @@ import hudson.plugins.git.GitSCM;
 import hudson.plugins.git.RevisionParameterAction;
 import org.apache.commons.lang.StringUtils;
 
+import java.util.Arrays;
 import java.util.Collection;
 
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptySet;
-import static java.util.stream.Collectors.toSet;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -258,11 +266,29 @@ class MergeRequestHookTriggerHandlerImpl extends AbstractWebHookTriggerHandler<M
 		return triggerConfig.apply(objectAttributes);
     }
     private boolean isBecameNoWip(MergeRequestHook hook) {
+        /*
+        context why we need to do it by comparing titles: https://gitlab.com/gitlab-org/gitlab/-/issues/25028
+         */
+
         MergeRequestChangedTitle changedTitle = Optional.of(hook).map(MergeRequestHook::getChanges).map(MergeRequestChanges::getTitle).orElse(new MergeRequestChangedTitle());
         String current = changedTitle.getCurrent() != null ? changedTitle.getCurrent() : "";
         String previous = changedTitle.getPrevious() != null ? changedTitle.getPrevious() : "";
 
-        return previous.contains("WIP") && !current.contains("WIP");
+        /*
+        Introduced in GitLab 13.2,
+        Work-In-Progress (WIP) merge requests were renamed to Draft. Support for using WIP will be removed in GitLab 14.0.
+
+        Add [Draft], Draft: or (Draft) to the start of the merge request's title. Clicking on
+        Start the title with Draft:, under the title box, when editing the merge request's
+        description will have the same effect.
+
+        Deprecated
+        Add [WIP] or WIP: to the start of the merge request's title.
+        WIP still works but was deprecated in favor of Draft. It will be removed in the next major version (GitLab 14.0).
+         */
+        List<String> wipPrefixes = Arrays.asList("[Draft]", "Draft:", "(Draft)", "[WIP]", "WIP:");
+        return !hook.getObjectAttributes().getWorkInProgress()
+            && wipPrefixes.stream().anyMatch(previous::startsWith) && wipPrefixes.stream().noneMatch(current::startsWith);
     }
 
     private boolean isForcedByAddedLabel(MergeRequestHook hook) {
